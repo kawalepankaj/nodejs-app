@@ -3,6 +3,9 @@ kind: Service
 metadata:
   name: nodejs-service
   namespace: nodejs-app
+  annotations:
+    # Forces the load balancer to be internet-facing instead of internal
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
 spec:
   type: LoadBalancer
   selector:
