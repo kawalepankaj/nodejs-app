@@ -4,98 +4,178 @@ pipeline {
     agent any
 
     environment {
-        registry = "pankajkawale21/nodejs-app"
-        registryCredential = "docker-hub"
+        REGISTRY = "pankajkawale21/nodejs-app"
+        REGISTRY_CREDENTIAL = "Docker_Cred"
 
         AWS_REGION = "ap-south-1"
-        EKS_CLUSTER = "your-eks-cluster-name"
+        EKS_CLUSTER = "nodejs-app"
 
-        DOCKER_BUILDKIT = "1"
+        DEPLOYED = "false"
+    }
+
+    options {
+        timestamps()
+        ansiColor('xterm')
     }
 
     stages {
 
-        stage('Cloning our Git') {
+        stage('Checkout Source Code') {
             steps {
-                git url: 'https://github.com/kawalepankaj/nodejs-app.git',
-                    branch: 'main',
-                    credentialsId: 'git_cred'
+                git branch: 'main',
+                    credentialsId: 'git_cred',
+                    url: 'https://github.com/kawalepankaj/nodejs-app.git'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    dockerImage = docker.build(
-                        "${registry}:${BUILD_NUMBER}",
-                        "--pull ."
-                    )
+                    dockerImage = docker.build("${REGISTRY}:${BUILD_NUMBER}")
                 }
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push Docker Image') {
             steps {
                 script {
-                    docker.withRegistry('https://index.docker.io/v1/', registryCredential) {
+                    docker.withRegistry('https://index.docker.io/v1/', REGISTRY_CREDENTIAL) {
+
                         dockerImage.push("${BUILD_NUMBER}")
+
                         dockerImage.push("latest")
                     }
                 }
             }
         }
 
-        stage('Configure AWS & EKS') {
+        stage('Configure AWS CLI') {
             steps {
+
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-prod-creds'
                 ]]) {
 
-                    sh """
-                    aws sts get-caller-identity
-                    aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
+                    sh '''
+                        echo "===== AWS CLI Version ====="
+                        aws --version
 
-                    kubectl cluster-info
-                    kubectl get nodes
-                    """
+                        echo "===== AWS Identity ====="
+                        aws sts get-caller-identity
+
+                        echo "===== Updating kubeconfig ====="
+                        aws eks update-kubeconfig \
+                            --region ${AWS_REGION} \
+                            --name ${EKS_CLUSTER}
+
+                        echo "===== Cluster Info ====="
+                        kubectl cluster-info
+
+                        echo "===== Worker Nodes ====="
+                        kubectl get nodes
+                    '''
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy to EKS') {
             steps {
+
                 sh """
-                sed -i 's|IMAGE_TAG|${BUILD_NUMBER}|g' deployment.yaml
+                    sed -i 's|IMAGE_TAG|${BUILD_NUMBER}|g' deployment.yaml
 
-                kubectl apply -f namespace.yaml
-                kubectl apply -f deployment.yaml
-                kubectl apply -f service.yaml
+                    kubectl apply -f namespace.yaml
 
-                kubectl rollout status deployment/nodejs-deployment \
-                -n nodejs-app --timeout=300s
+                    kubectl apply -f deployment.yaml
 
-                kubectl get pods -n nodejs-app
-                kubectl get svc -n nodejs-app
+                    kubectl apply -f service.yaml
+
+                    kubectl rollout status deployment/nodejs-deployment \
+                        -n nodejs-app --timeout=300s
+
+                    kubectl get pods -n nodejs-app
+
+                    kubectl get svc -n nodejs-app
                 """
+
+                script {
+                    env.DEPLOYED = "true"
+                }
             }
         }
     }
 
     post {
 
-        failure {
+        success {
             sh '''
-            kubectl rollout undo deployment/nodejs-deployment \
-            -n nodejs-app || true
-            '''
+             echo success
+             '''
+
+    //        emailext(
+    //            subject: "SUCCESS : ${JOB_NAME} #${BUILD_NUMBER}",
+    //            mimeType: "text/html",
+    //            body: """
+    //            <h2 style='color:green'>Deployment Successful</h2>
+    //
+    //            <b>Job:</b> ${JOB_NAME}<br>
+    //
+    //            <b>Build:</b> ${BUILD_NUMBER}<br>
+    //
+    //            <b>Docker Image:</b> ${REGISTRY}:${BUILD_NUMBER}<br>
+    //
+    //            <b>Console:</b>
+    //
+    //            <a href="${BUILD_URL}">
+    //            ${BUILD_URL}
+    //            </a>
+    //            """,
+    //            to: "pankajkawale2107@gmail.com"
+    //        )
+        }
+
+        failure {
+
+            script {
+
+                if (env.DEPLOYED == "true") {
+
+                    sh '''
+                        echo "Deployment failed. Rolling back..."
+
+                        kubectl rollout undo deployment/nodejs-deployment \
+                            -n nodejs-app || true
+                    '''
+                }
+            }
+
+//            emailext(
+//                subject: "FAILED : ${JOB_NAME} #${BUILD_NUMBER}",
+//                mimeType: "text/html",
+//                body: """
+//                <h2 style='color:red'>Deployment Failed</h2>
+//
+//                <b>Job:</b> ${JOB_NAME}<br>
+//
+//                <b>Build:</b> ${BUILD_NUMBER}<br>
+//
+//                <a href="${BUILD_URL}">
+//                View Console Output
+//                </a>
+//                """,
+//                to: "pankajkawale2107@gmail.com"
+//            )
         }
 
         always {
+
             sh """
-            docker rmi ${registry}:${BUILD_NUMBER} || true
-            docker image prune -f || true
+                docker rmi ${REGISTRY}:${BUILD_NUMBER} || true
+                docker rmi ${REGISTRY}:latest || true
+                docker image prune -f || true
             """
+
             cleanWs()
         }
     }
