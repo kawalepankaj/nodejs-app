@@ -1,3 +1,4 @@
+```groovy
 def dockerImage
 
 pipeline {
@@ -40,9 +41,7 @@ pipeline {
             steps {
                 script {
                     docker.withRegistry('https://index.docker.io/v1/', REGISTRY_CREDENTIAL) {
-
                         dockerImage.push("${BUILD_NUMBER}")
-
                         dockerImage.push("latest")
                     }
                 }
@@ -51,7 +50,6 @@ pipeline {
 
         stage('Configure AWS CLI') {
             steps {
-
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-prod-creds'
@@ -85,17 +83,27 @@ pipeline {
                 sh """
                     sed -i 's|IMAGE_TAG|${BUILD_NUMBER}|g' deployment.yaml
 
+                    echo "===== Deploy Namespace ====="
                     kubectl apply -f namespace.yaml
 
+                    echo "===== Deploy Application ====="
                     kubectl apply -f deployment.yaml
 
+                    echo "===== Deploy Service ====="
                     kubectl apply -f service.yaml
 
+                    echo "===== Deploy Monitoring ====="
+                    kubectl apply -f monitoring/servicemonitor.yaml
+                    kubectl apply -f monitoring/alert-rules.yaml
+
+                    echo "===== Waiting for Rollout ====="
                     kubectl rollout status deployment/nodejs-deployment \
                         -n nodejs-app --timeout=300s
 
+                    echo "===== Pods ====="
                     kubectl get pods -n nodejs-app
 
+                    echo "===== Services ====="
                     kubectl get svc -n nodejs-app
                 """
 
@@ -104,35 +112,42 @@ pipeline {
                 }
             }
         }
+
+        stage('Verify Metrics Endpoint') {
+            steps {
+
+                sh '''
+                    echo "===== Waiting for Pods ====="
+                    sleep 20
+
+                    POD=$(kubectl get pods \
+                        -n nodejs-app \
+                        -l app=nodejs-app \
+                        -o jsonpath="{.items[0].metadata.name}")
+
+                    echo "Pod: $POD"
+
+                    echo "===== Verify Health ====="
+                    kubectl exec -n nodejs-app $POD -- \
+                        wget -qO- http://localhost:3000/health
+
+                    echo ""
+
+                    echo "===== Verify Metrics ====="
+                    kubectl exec -n nodejs-app $POD -- \
+                        wget -qO- http://localhost:3000/metrics | head -20
+                '''
+            }
+        }
     }
 
     post {
 
         success {
-            sh '''
-             echo success
-             '''
 
-    //        emailext(
-    //            subject: "SUCCESS : ${JOB_NAME} #${BUILD_NUMBER}",
-    //            mimeType: "text/html",
-    //            body: """
-    //            <h2 style='color:green'>Deployment Successful</h2>
-    //
-    //            <b>Job:</b> ${JOB_NAME}<br>
-    //
-    //            <b>Build:</b> ${BUILD_NUMBER}<br>
-    //
-    //            <b>Docker Image:</b> ${REGISTRY}:${BUILD_NUMBER}<br>
-    //
-    //            <b>Console:</b>
-    //
-    //            <a href="${BUILD_URL}">
-    //            ${BUILD_URL}
-    //            </a>
-    //            """,
-    //            to: "pankajkawale2107@gmail.com"
-    //        )
+            echo "Application deployed successfully."
+            echo "Prometheus metrics endpoint verified."
+
         }
 
         failure {
@@ -149,23 +164,6 @@ pipeline {
                     '''
                 }
             }
-
-//            emailext(
-//                subject: "FAILED : ${JOB_NAME} #${BUILD_NUMBER}",
-//                mimeType: "text/html",
-//                body: """
-//                <h2 style='color:red'>Deployment Failed</h2>
-//
-//                <b>Job:</b> ${JOB_NAME}<br>
-//
-//                <b>Build:</b> ${BUILD_NUMBER}<br>
-//
-//                <a href="${BUILD_URL}">
-//                View Console Output
-//                </a>
-//                """,
-//                to: "pankajkawale2107@gmail.com"
-//            )
         }
 
         always {
@@ -180,3 +178,4 @@ pipeline {
         }
     }
 }
+```
