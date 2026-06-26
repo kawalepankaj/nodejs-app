@@ -4,12 +4,11 @@ metadata:
   name: nodejs-service
   namespace: nodejs-app
   annotations:
-    # Forces the load balancer to be internet-facing instead of internal
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
 spec:
   type: LoadBalancer
   selector:
     app: nodejs-app
   ports:
-  - port: 3000
-    targetPort: 3000
+    - port: 3000
+      targetPort: 3000
