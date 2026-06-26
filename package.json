@@ -1,0 +1,13 @@
+{
+  "name": "docker_web_app",
+  "version": "1.0.0",
+  "description": "Node.js on Docker",
+  "author": "Pankaj Kawale <pankajkawale2107@gmail.com>",
+  "main": "Node.js",
+  "scripts": {
+    "start": "node Node.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
