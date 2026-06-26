@@ -1,4 +1,3 @@
-```groovy
 def dockerImage
 
 pipeline {
@@ -48,38 +47,39 @@ pipeline {
             }
         }
 
-        stage('Configure AWS CLI') {
+         stage('Configure AWS CLI') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-prod-creds'
-                ]]) {
+                sh '''
+                    echo "===== AWS CLI Version ====="
+                    aws --version
 
-                    sh '''
-                        echo "===== AWS CLI Version ====="
-                        aws --version
+                    echo "===== AWS Identity ====="
+                    aws sts get-caller-identity
 
-                        echo "===== AWS Identity ====="
-                        aws sts get-caller-identity
+                    echo "===== Updating kubeconfig ====="
+                    aws eks update-kubeconfig \
+                        --region ${AWS_REGION} \
+                        --name ${EKS_CLUSTER}
 
-                        echo "===== Updating kubeconfig ====="
-                        aws eks update-kubeconfig \
-                            --region ${AWS_REGION} \
-                            --name ${EKS_CLUSTER}
+                    echo "===== Cluster Info ====="
+                    kubectl cluster-info
 
-                        echo "===== Cluster Info ====="
-                        kubectl cluster-info
-
-                        echo "===== Worker Nodes ====="
-                        kubectl get nodes
-                    '''
-                }
+                    echo "===== Worker Nodes ====="
+                    kubectl get nodes
+                '''
             }
         }
-
+    stage('Install Prometheus CRDs') {
+        steps {
+        // Ensure kubectl is authenticated to your cluster here
+            sh '''
+            kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.74.0/example/prometheus-operator-crd/monitoring.coreos.com_servicemonitors.yaml
+kubectl apply --server-side -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.74.0/example/prometheus-operator-crd/monitoring.coreos.com_prometheusrules.yaml
+            '''
+        }
+    }
         stage('Deploy to EKS') {
             steps {
-
                 sh """
                     sed -i 's|IMAGE_TAG|${BUILD_NUMBER}|g' deployment.yaml
 
@@ -93,6 +93,7 @@ pipeline {
                     kubectl apply -f service.yaml
 
                     echo "===== Deploy Monitoring ====="
+                    kubectl apply -f monitoring/namespace.yaml
                     kubectl apply -f monitoring/servicemonitor.yaml
                     kubectl apply -f monitoring/alert-rules.yaml
 
@@ -115,7 +116,6 @@ pipeline {
 
         stage('Verify Metrics Endpoint') {
             steps {
-
                 sh '''
                     echo "===== Waiting for Pods ====="
                     sleep 20
@@ -129,13 +129,13 @@ pipeline {
 
                     echo "===== Verify Health ====="
                     kubectl exec -n nodejs-app $POD -- \
-                        wget -qO- http://localhost:3000/health
+                        wget -qO- http://127.0.0.1:3000/health
 
                     echo ""
 
                     echo "===== Verify Metrics ====="
                     kubectl exec -n nodejs-app $POD -- \
-                        wget -qO- http://localhost:3000/metrics | head -20
+                        wget -qO- http://127.0.0.1:3000/metrics | head -20
                 '''
             }
         }
@@ -144,18 +144,14 @@ pipeline {
     post {
 
         success {
-
             echo "Application deployed successfully."
-            echo "Prometheus metrics endpoint verified."
-
+            echo "Monitoring configuration deployed."
+            echo "Metrics endpoint verified."
         }
 
         failure {
-
             script {
-
                 if (env.DEPLOYED == "true") {
-
                     sh '''
                         echo "Deployment failed. Rolling back..."
 
@@ -167,7 +163,6 @@ pipeline {
         }
 
         always {
-
             sh """
                 docker rmi ${REGISTRY}:${BUILD_NUMBER} || true
                 docker rmi ${REGISTRY}:latest || true
@@ -178,4 +173,3 @@ pipeline {
         }
     }
 }
-```
