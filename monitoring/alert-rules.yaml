@@ -1,1 +1,75 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nodejs-alert-rules
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  groups:
+  - name: nodejs.rules
 
+    rules:
+
+    # Application Down
+    - alert: NodeJSApplicationDown
+      expr: up{job="nodejs-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Node.js application is down"
+        description: "Prometheus cannot scrape the Node.js application for more than 1 minute."
+
+    # High Memory Usage
+    - alert: HighMemoryUsage
+      expr: process_resident_memory_bytes > 200000000
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage"
+        description: "Node.js process memory usage is above 200MB."
+
+    # High CPU Usage
+    - alert: HighCPUUsage
+      expr: rate(process_cpu_user_seconds_total[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage"
+        description: "CPU utilization has exceeded 80%."
+
+    # High Request Latency
+    - alert: HighRequestLatency
+      expr: histogram_quantile(
+              0.95,
+              sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+            ) > 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High request latency"
+        description: "95th percentile request latency is greater than 1 second."
+
+    # High Request Rate
+    - alert: HighRequestRate
+      expr: rate(http_requests_total[1m]) > 100
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High request rate"
+        description: "Application is receiving more than 100 requests/sec."
+
+    # Pod Restarting Frequently
+    - alert: PodRestartingFrequently
+      expr: increase(kube_pod_container_status_restarts_total{namespace="nodejs-app"}[10m]) > 3
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod restarting frequently"
+        description: "Container restarted more than 3 times in the last 10 minutes."
