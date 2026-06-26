@@ -1,25 +1,30 @@
 pipeline {
-    agent any 
+    agent any
 
     environment {
         registry = "pankajkawale21/nodejs-app"
-        registryCredential = 'docker-hub'
-        dockerImage = ''
+        registryCredential = "docker-hub"
+
+        AWS_REGION = "ap-south-1"
+        EKS_CLUSTER = "your-eks-cluster-name"
+
+        dockerImage = ""
     }
 
     stages {
+
         stage('Cloning our Git') {
             steps {
-                // NOTE: If this is a Multibranch Pipeline, replace the line below with:
-                // checkout scm
-                git url: 'https://github.com/kawalepankaj/nodejs-app.git', branch: 'main', credentialsId: 'git_cred'
+                git url: 'https://github.com/kawalepankaj/nodejs-app.git',
+                    branch: 'main',
+                    credentialsId: 'git_cred'
             }
         }
 
         stage('Building our image') {
             steps {
                 script {
-                    dockerImage = docker.build "${registry}:${BUILD_NUMBER}"
+                    dockerImage = docker.build("${registry}:${BUILD_NUMBER}")
                 }
             }
         }
@@ -34,53 +39,95 @@ pipeline {
             }
         }
 
+        stage('Configure AWS & EKS') {
+            steps {
+
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-prod-creds'
+                ]]) {
+
+                    sh """
+                        aws --version
+
+                        aws sts get-caller-identity
+
+                        aws eks update-kubeconfig \
+                          --region ${AWS_REGION} \
+                          --name ${EKS_CLUSTER}
+
+                        kubectl get nodes
+                    """
+                }
+            }
+        }
+
         stage('Deploy to Kubernetes') {
-           steps {
-                // 1. Replace 'IMAGE_TAG' in deployment.yaml with the actual Jenkins Build Number
-                sh "sed -i 's|IMAGE_TAG|${BUILD_NUMBER}|g' deployment.yaml"
-                
-                // 2. Create the namespace (if it doesn't exist)
-                sh 'kubectl apply -f namespace.yaml'
-                
-                // 3. Deploy the app and service into the 'nodejs-app' namespace
-                sh 'kubectl apply -f deployment.yaml -f service.yaml -n nodejs-app'
+            steps {
+
+                sh """
+                    sed -i 's|IMAGE_TAG|${BUILD_NUMBER}|g' deployment.yaml
+
+                    kubectl apply -f namespace.yaml
+
+                    kubectl apply -f deployment.yaml
+                    kubectl apply -f service.yaml
+
+                    kubectl rollout status deployment/nodejs-deployment \
+                        -n nodejs-app --timeout=180s
+
+                    kubectl get pods -n nodejs-app
+                    kubectl get svc -n nodejs-app
+                """
             }
         }
     }
 
-    // ==========================================
-    // POST ACTIONS & EMAIL NOTIFICATIONS
-    // ==========================================
     post {
+
         success {
-            emailext (
-                subject: "✅ SUCCESS: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
-                body: """
-                    <h2 style="color:green;">Build Succeeded!</h2>
-                    <p><b>Job:</b> ${env.JOB_NAME}</p>
-                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                    <p><b>Build URL:</b> <a href="${env.BUILD_URL}">Click here to view console output</a></p>
-                    <p><b>Docker Image:</b> ${registry}:${BUILD_NUMBER}</p>
-                """,
+            emailext(
+                subject: "SUCCESS : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 mimeType: 'text/html',
+                body: """
+                <h2 style='color:green'>Deployment Successful</h2>
+
+                <b>Job :</b> ${env.JOB_NAME}<br>
+                <b>Build :</b> ${env.BUILD_NUMBER}<br>
+                <b>Docker Image :</b> ${registry}:${BUILD_NUMBER}<br>
+                <b>Build URL :</b>
+                <a href="${env.BUILD_URL}">
+                ${env.BUILD_URL}
+                </a>
+                """,
                 to: "pankajkawale2107@gmail.com"
             )
         }
+
         failure {
-            emailext (
-                subject: "❌ FAILED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
-                body: """
-                    <h2 style="color:red;">Build Failed!</h2>
-                    <p><b>Job:</b> ${env.JOB_NAME}</p>
-                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                    <p><b>Build URL:</b> <a href="${env.BUILD_URL}">Click here to view console output</a></p>
-                """,
+            emailext(
+                subject: "FAILED : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 mimeType: 'text/html',
+                body: """
+                <h2 style='color:red'>Deployment Failed</h2>
+
+                <b>Job :</b> ${env.JOB_NAME}<br>
+                <b>Build :</b> ${env.BUILD_NUMBER}<br>
+
+                <a href="${env.BUILD_URL}">
+                Console Output
+                </a>
+                """,
                 to: "pankajkawale2107@gmail.com"
             )
         }
+
         always {
-            // Ensures workspace is cleaned up even if the build fails
+
+            sh '''
+            docker image prune -af || true
+            '''
+
             cleanWs()
         }
     }
