@@ -5,7 +5,8 @@
   "author": "Pankaj Kawale <pankajkawale2107@gmail.com>",
   "main": "Node.js",
   "scripts": {
-    "start": "node Node.js"
+    "start": "node Node.js",
+    "test": "echo \"No tests configured\""
   },
   "dependencies": {
     "express": "^4.19.2"
