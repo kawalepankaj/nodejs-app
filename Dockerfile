@@ -1,7 +1,7 @@
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json Node.js ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN npm install --omit=dev
 COPY --chown=node:node . .
 USER node
 EXPOSE 3000
